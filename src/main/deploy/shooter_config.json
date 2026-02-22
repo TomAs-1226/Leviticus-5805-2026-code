@@ -1,0 +1,46 @@
+{
+  "version": "1.0",
+  "description": "Shooter RPM lookup table based on distance to HUB - 2026 REBUILT",
+  "table": [
+    {
+      "distance_meters": 1.0,
+      "rpm": 1200,
+      "notes": "Point blank - touching HUB"
+    },
+    {
+      "distance_meters": 1.5,
+      "rpm": 1500,
+      "notes": "Close to HUB"
+    },
+    {
+      "distance_meters": 2.0,
+      "rpm": 1800,
+      "notes": "Mid-range HUB shot"
+    },
+    {
+      "distance_meters": 2.5,
+      "rpm": 2100,
+      "notes": "Extended range"
+    },
+    {
+      "distance_meters": 3.0,
+      "rpm": 2400,
+      "notes": "Far HUB shot"
+    },
+    {
+      "distance_meters": 3.5,
+      "rpm": 2600,
+      "notes": "Cross-field range"
+    },
+    {
+      "distance_meters": 4.0,
+      "rpm": 2800,
+      "notes": "Long distance"
+    },
+    {
+      "distance_meters": 5.0,
+      "rpm": 3000,
+      "notes": "Maximum distance (5m)"
+    }
+  ]
+}
