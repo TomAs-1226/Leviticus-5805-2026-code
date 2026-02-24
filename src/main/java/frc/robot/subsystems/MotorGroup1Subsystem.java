@@ -108,6 +108,7 @@ public class MotorGroup1Subsystem extends SubsystemBase {
   public double getMotor2RPM() { return m_motor2.getVelocity().getValueAsDouble() * 60.0; }
   public double getMotor1Amps() { return m_motor1.getSupplyCurrent().getValueAsDouble(); }
   public double getMotor2Amps() { return m_motor2.getSupplyCurrent().getValueAsDouble(); }
+  public double getPowerPercent() { return m_powerPercent; }
 
   @Override
   public void periodic() {

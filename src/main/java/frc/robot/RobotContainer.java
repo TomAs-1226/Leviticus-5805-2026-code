@@ -16,7 +16,7 @@ import frc.robot.commands.RunMotorGroup1Command;
 import frc.robot.commands.RunMotorGroup2ForwardCommand;
 import frc.robot.commands.RunMotorGroup2ReverseCommand;
 import frc.robot.commands.VisionControlCommand;
-import frc.robot.shuffleboard.RobotDashboard;
+import frc.robot.shuffleboard.UnifiedGlassDashboard;
 import frc.robot.subsystems.HoodSubsystem;
 import frc.robot.subsystems.IntakeDeploySubsystem;
 import frc.robot.subsystems.IntakeSubsystem;
@@ -50,8 +50,8 @@ public class RobotContainer {
   // Commands that need to persist
   private final VisionControlCommand m_visionCommand;
 
-  // Custom Shuffleboard dashboard
-  private final RobotDashboard m_dashboard;
+  // Unified Glass-compatible dashboard (single page with all stats)
+  private final UnifiedGlassDashboard m_dashboard;
 
   public RobotContainer() {
     // Wire up subsystems
@@ -63,18 +63,18 @@ public class RobotContainer {
     m_visionCommand = new VisionControlCommand(
         m_vision, m_feeder, m_shooter, m_hood, m_controller, m_telemetry);
 
-    // Initialize custom dashboard with all critical stats on one page
-    m_dashboard = new RobotDashboard();
+    // Initialize unified Glass dashboard with all critical stats on ONE page
+    m_dashboard = new UnifiedGlassDashboard();
 
     configureBindings();
   }
 
   /**
-   * Updates the custom Shuffleboard dashboard.
+   * Updates the unified Glass dashboard.
    * Call this from Robot.robotPeriodic() for real-time updates.
    */
   public void updateDashboard() {
-    m_dashboard.update(m_intake, m_intakeDeploy, m_feeder, m_shooter, m_hood, m_vision, m_power);
+    m_dashboard.update(m_intake, m_intakeDeploy, m_feeder, m_shooter, m_hood, m_vision, m_power, m_telemetry);
   }
 
   private void configureBindings() {

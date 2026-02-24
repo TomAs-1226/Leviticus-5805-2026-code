@@ -417,6 +417,18 @@ public class MotorGroup2Subsystem extends SubsystemBase {
   }
   public double getRPMError() { return m_targetRPM - getAverageRPM(); }
 
+  /** Check if shooter is at target RPM (within 5% tolerance). */
+  public boolean isAtTargetRPM() {
+    if (m_targetRPM < 100) return false; // Not really targeting anything
+    return Math.abs(getRPMError()) < (m_targetRPM * 0.05);
+  }
+
+  // Individual motor alive status
+  public boolean isMotor1Alive() { return m_motor1.isAlive(); }
+  public boolean isMotor2Alive() { return m_motor2.isAlive(); }
+  public boolean isMotor3Alive() { return m_motor3.isAlive(); }
+  public boolean isMotor4Alive() { return m_motor4.isAlive(); }
+
   public double[] getMotorRPMs() {
     return new double[] {
       m_motor1.getVelocity().getValueAsDouble() * 60.0,

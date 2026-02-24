@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(.gradlew build:*)",
+      "Bash(cmd /c \"gradlew.bat build\")",
+      "Bash(cmd /c \"cd /d \"\"c:\\\\Users\\\\Team Account\\\\Desktop\\\\5805-alphabot-2026\\\\Alphabot\"\" && gradlew.bat build 2>&1\")",
+      "Bash(powershell:*)",
+      "Bash(./gradlew build:*)",
+      "Bash(powershell.exe -Command \".\\\\gradlew.bat build --refresh-dependencies\")"
+    ]
+  }
+}
