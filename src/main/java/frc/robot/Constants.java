@@ -235,49 +235,113 @@ public final class Constants {
   }
 
   public static class VisionConstants {
-    // Camera names - must match the names configured in AprilVision 3.2 UI
-    // Set to empty string "" to disable a camera
-    public static final String kCamera1Name = "cam1";
-    public static final String kCamera2Name = "cam2";
-    public static final String kCamera3Name = "cam3";
-    public static final String kCamera4Name = "cam4";
+    // ===== CAMERA HARDWARE CONFIGURATION =====
+    // 4 ArduCam setup: 2 mono (AprilTag), 2 color (game piece)
+    // Camera names must match PhotonVision/AprilVision UI configuration
 
-    // Camera offsets from robot center (meters and degrees)
-    // Tune these in SmartDashboard for accurate measurements
-    // X = forward/back, Y = left/right, Z = up/down (meters)
-    // Roll, Pitch, Yaw = rotation (degrees)
+    // Camera type enum for processing mode selection
+    public enum CameraType {
+      MONO,   // Grayscale - faster AprilTag processing
+      COLOR   // RGB - game piece detection
+    }
 
-    // Camera 1 offset (front camera example)
-    public static final double kCam1OffsetX = 0.0;
-    public static final double kCam1OffsetY = 0.0;
-    public static final double kCam1OffsetZ = 0.0;
-    public static final double kCam1Roll = 0.0;
-    public static final double kCam1Pitch = 0.0;
-    public static final double kCam1Yaw = 0.0;
+    // ===== MONO CAMERAS (AprilTag Localization) =====
+    // Mounted at diagonal corners for 360° AprilTag coverage
+    // ArduCam OV9281 Global Shutter Mono recommended for AprilTags
+    public static final String kMonoCam1Name = "mono_fl";  // Front-Left corner
+    public static final String kMonoCam2Name = "mono_br";  // Back-Right corner
+    public static final CameraType kMonoCam1Type = CameraType.MONO;
+    public static final CameraType kMonoCam2Type = CameraType.MONO;
 
-    // Camera 2 offset
-    public static final double kCam2OffsetX = 0.0;
-    public static final double kCam2OffsetY = 0.0;
-    public static final double kCam2OffsetZ = 0.0;
-    public static final double kCam2Roll = 0.0;
-    public static final double kCam2Pitch = 0.0;
-    public static final double kCam2Yaw = 0.0;
+    // ===== COLOR CAMERAS (Game Piece Detection) =====
+    // Front for intake targeting, Back for field awareness
+    // ArduCam OV9782 Color recommended for game pieces
+    public static final String kColorCam1Name = "color_front";  // Front center
+    public static final String kColorCam2Name = "color_back";   // Rear center
+    public static final CameraType kColorCam1Type = CameraType.COLOR;
+    public static final CameraType kColorCam2Type = CameraType.COLOR;
 
-    // Camera 3 offset
-    public static final double kCam3OffsetX = 0.0;
-    public static final double kCam3OffsetY = 0.0;
-    public static final double kCam3OffsetZ = 0.0;
-    public static final double kCam3Roll = 0.0;
-    public static final double kCam3Pitch = 0.0;
-    public static final double kCam3Yaw = 0.0;
+    // Legacy camera name aliases for compatibility
+    public static final String kCamera1Name = kMonoCam1Name;
+    public static final String kCamera2Name = kMonoCam2Name;
+    public static final String kCamera3Name = kColorCam1Name;
+    public static final String kCamera4Name = kColorCam2Name;
 
-    // Camera 4 offset
-    public static final double kCam4OffsetX = 0.0;
-    public static final double kCam4OffsetY = 0.0;
-    public static final double kCam4OffsetZ = 0.0;
-    public static final double kCam4Roll = 0.0;
-    public static final double kCam4Pitch = 0.0;
-    public static final double kCam4Yaw = 0.0;
+    // ===== ARDUCAM SETTINGS =====
+    // Resolution settings (higher = better accuracy, lower = faster processing)
+    public static final int kMonoCamResWidth = 1280;   // OV9281 native
+    public static final int kMonoCamResHeight = 800;
+    public static final int kColorCamResWidth = 1280;  // OV9782 native
+    public static final int kColorCamResHeight = 800;
+
+    // Exposure settings (lower = less motion blur, requires good lighting)
+    public static final int kMonoCamExposureMs = 5;    // Fast exposure for tags
+    public static final int kColorCamExposureMs = 10;  // Slightly longer for color
+
+    // ===== CAMERA MOUNTING POSITIONS =====
+    // Measured from robot center (meters and degrees)
+    // X = forward(+)/back(-), Y = left(+)/right(-), Z = up from floor
+    // Pitch = tilt down(+)/up(-), Yaw = rotate left(+)/right(-)
+    // IMPORTANT: Don't mount at AprilTag height (0.57m) - angle cameras!
+
+    // Mono Cam 1 - Front-Left corner, angled outward
+    // TUNE THESE VALUES - measure from robot center to camera lens
+    public static final double kMonoCam1X = 0.0;       // Forward offset (meters)
+    public static final double kMonoCam1Y = 0.0;       // Left offset (meters)
+    public static final double kMonoCam1Z = 0.0;       // Height from floor (meters)
+    public static final double kMonoCam1Roll = 0.0;    // Roll (degrees)
+    public static final double kMonoCam1Pitch = 0.0;   // Tilt down 15° to see tags (degrees)
+    public static final double kMonoCam1Yaw = 0.0;     // Angled 45° left (degrees)
+
+    // Mono Cam 2 - Back-Right corner, angled outward
+    public static final double kMonoCam2X = 0.0;       // Backward offset
+    public static final double kMonoCam2Y = 0.0;       // Right offset
+    public static final double kMonoCam2Z = 0.0;
+    public static final double kMonoCam2Roll = 0.0;
+    public static final double kMonoCam2Pitch = 0.0;   // Tilt down
+    public static final double kMonoCam2Yaw = 0.0;     // Angled 45° right (180+45=225 or -135)
+
+    // Color Cam 1 - Front center, forward-facing
+    public static final double kColorCam1X = 0.0;      // Front of robot
+    public static final double kColorCam1Y = 0.0;      // Centered
+    public static final double kColorCam1Z = 0.0;
+    public static final double kColorCam1Roll = 0.0;
+    public static final double kColorCam1Pitch = 0.0;  // Slight tilt for floor game pieces
+    public static final double kColorCam1Yaw = 0.0;    // Straight forward
+
+    // Color Cam 2 - Back center, rear-facing
+    public static final double kColorCam2X = 0.0;      // Back of robot
+    public static final double kColorCam2Y = 0.0;      // Centered
+    public static final double kColorCam2Z = 0.0;
+    public static final double kColorCam2Roll = 0.0;
+    public static final double kColorCam2Pitch = 0.0;
+    public static final double kColorCam2Yaw = 180.0;  // Facing backward
+
+    // Legacy offset aliases for compatibility
+    public static final double kCam1OffsetX = kMonoCam1X;
+    public static final double kCam1OffsetY = kMonoCam1Y;
+    public static final double kCam1OffsetZ = kMonoCam1Z;
+    public static final double kCam1Roll = kMonoCam1Roll;
+    public static final double kCam1Pitch = kMonoCam1Pitch;
+    public static final double kCam1Yaw = kMonoCam1Yaw;
+    public static final double kCam2OffsetX = kMonoCam2X;
+    public static final double kCam2OffsetY = kMonoCam2Y;
+    public static final double kCam2OffsetZ = kMonoCam2Z;
+    public static final double kCam2Roll = kMonoCam2Roll;
+    public static final double kCam2Pitch = kMonoCam2Pitch;
+    public static final double kCam2Yaw = kMonoCam2Yaw;
+    public static final double kCam3OffsetX = kColorCam1X;
+    public static final double kCam3OffsetY = kColorCam1Y;
+    public static final double kCam3OffsetZ = kColorCam1Z;
+    public static final double kCam3Roll = kColorCam1Roll;
+    public static final double kCam3Pitch = kColorCam1Pitch;
+    public static final double kCam3Yaw = kColorCam1Yaw;
+    public static final double kCam4OffsetX = kColorCam2X;
+    public static final double kCam4OffsetY = kColorCam2Y;
+    public static final double kCam4OffsetZ = kColorCam2Z;
+    public static final double kCam4Roll = kColorCam2Roll;
+    public static final double kCam4Pitch = kColorCam2Pitch;
+    public static final double kCam4Yaw = kColorCam2Yaw;
 
     // 2026 REBUILT Game - HUB AprilTag IDs (all 4 faces of the HUB)
     // Each face has 2 tags: one centered, one offset
@@ -342,6 +406,22 @@ public final class Constants {
 
     // ===== BEST TAG SELECTION =====
     public static final double kMaxAmbiguityThreshold = 0.15;   // Tags with higher ambiguity are lower priority
+
+    // ===== TAG MEMORY SYSTEM =====
+    // Context-aware tag retention when tag briefly disappears
+    public static final double kTagHoldTimeShooting = 0.25;     // 250ms when actively shooting
+    public static final double kTagHoldTimeSpinup = 0.15;       // 150ms during spinup
+    public static final double kTagHoldTimeIdle = 0.10;         // 100ms when idle
+    public static final double kCooldownDuration = 0.3;         // Time in cooldown state after shooting
+
+    // ===== PREDICTIVE TRACKING =====
+    public static final double kPredictiveConfidenceThreshold = 0.7;  // Min confidence to use prediction
+    public static final double kMinDistanceThreshold = 0.01;          // Min distance to use distance-based RPM
+
+    // ===== SHOOTER VELOCITY VERIFICATION =====
+    // Verify shooter is at speed before feeding to prevent jams
+    public static final double kShooterRPMTolerance = 0.85;           // 85% of target RPM required
+    public static final boolean kRequireShooterAtSpeed = true;        // Enable velocity check before feeding
   }
 
   public static class TelemetryConstants {
@@ -388,7 +468,10 @@ public final class Constants {
     // Set to false to disable CAN scanning (uses kExpectedMotorIDs only)
     public static final boolean kEnableMotorDiscovery = true;
     // Expected motor CAN IDs - only these are checked (fast startup)
-    public static final int[] kExpectedMotorIDs = {1, 2, 3, 4, 5, 6, 7, 8};  // All motors including deploy
+    // IDs 1-8: Mechanism motors (feeder, shooter, intake, deploy, hood)
+    // IDs 9-16: Swerve motors (steer 9-12, drive 13-16)
+    // ID 17: Hood motor, ID 18: Hood CANCoder
+    public static final int[] kExpectedMotorIDs = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17};
     // CAN buses to scan (empty string = RIO bus)
     public static final String[] kCANBusNames = {"", "Default Name"};
   }
@@ -436,7 +519,7 @@ public final class Constants {
   public static class SwerveConstants {
     // ===== SWERVE DRIVE MODULE MOTORS =====
     // 4 modules: Front Left (FL), Front Right (FR), Back Left (BL), Back Right (BR)
-    // Each module has: 1 Kraken X44 (steering) + 1 Kraken X60 (drive)
+    // Each module has: 1 Kraken X44 (steering) + 1 Kraken X60 (drive) + 1 CANCoder
 
     // CANivore bus name for all swerve modules
     public static final String kSwerveCANBus = "Default Name";
@@ -454,6 +537,65 @@ public final class Constants {
     public static final int kFrontRightDriveMotorID = 14;  // FR drive
     public static final int kBackLeftDriveMotorID = 15;    // BL drive
     public static final int kBackRightDriveMotorID = 16;   // BR drive
+
+    // ===== CANCODERS (Absolute Encoders) =====
+    // Required for absolute steering position on startup
+    public static final int kFrontLeftEncoderID = 19;      // FL CANCoder
+    public static final int kFrontRightEncoderID = 20;     // FR CANCoder
+    public static final int kBackLeftEncoderID = 21;       // BL CANCoder
+    public static final int kBackRightEncoderID = 22;      // BR CANCoder
+
+    // ===== ENCODER OFFSETS (TUNE THESE) =====
+    // Offset in rotations to zero position (wheels pointing forward)
+    // Set these after calibrating with wheels straight
+    public static final double kFrontLeftEncoderOffset = 0.0;
+    public static final double kFrontRightEncoderOffset = 0.0;
+    public static final double kBackLeftEncoderOffset = 0.0;
+    public static final double kBackRightEncoderOffset = 0.0;
+
+    // ===== PHYSICAL DIMENSIONS (TUNE THESE) =====
+    // Distance from robot center to wheel center (meters)
+    // Measure carefully for accurate odometry!
+    public static final double kWheelBaseMeters = 0.0;      // Front-to-back distance
+    public static final double kTrackWidthMeters = 0.0;     // Left-to-right distance
+    public static final double kWheelRadiusMeters = 0.0;    // Wheel radius
+
+    // ===== GEAR RATIOS (TUNE THESE) =====
+    // Depends on your swerve module type (SDS, WCP, etc.)
+    public static final double kDriveGearRatio = 0.0;       // Motor rotations per wheel rotation
+    public static final double kSteerGearRatio = 0.0;       // Motor rotations per module rotation
+
+    // ===== CURRENT LIMITS =====
+    public static final double kDriveCurrentLimit = 80.0;   // Amps - Kraken X60
+    public static final double kSteerCurrentLimit = 40.0;   // Amps - Kraken X44
+
+    // ===== MOTOR INVERSIONS (TUNE THESE) =====
+    // Set based on your module wiring
+    public static final boolean kFrontLeftDriveInverted = false;
+    public static final boolean kFrontRightDriveInverted = false;
+    public static final boolean kBackLeftDriveInverted = false;
+    public static final boolean kBackRightDriveInverted = false;
+    public static final boolean kFrontLeftSteerInverted = false;
+    public static final boolean kFrontRightSteerInverted = false;
+    public static final boolean kBackLeftSteerInverted = false;
+    public static final boolean kBackRightSteerInverted = false;
+
+    // ===== PID GAINS (TUNE THESE) =====
+    // Drive motor velocity PID
+    public static final double kDriveKp = 0.0;
+    public static final double kDriveKi = 0.0;
+    public static final double kDriveKd = 0.0;
+    public static final double kDriveKv = 0.0;              // Feedforward
+    public static final double kDriveKs = 0.0;              // Static friction
+
+    // Steer motor position PID
+    public static final double kSteerKp = 0.0;
+    public static final double kSteerKi = 0.0;
+    public static final double kSteerKd = 0.0;
+
+    // ===== SPEED LIMITS (TUNE THESE) =====
+    public static final double kMaxSpeedMetersPerSec = 0.0;       // Max linear speed
+    public static final double kMaxAngularSpeedRadPerSec = 0.0;   // Max rotation speed
   }
 }
 //smooth accel code 

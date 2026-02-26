@@ -8,6 +8,7 @@ import edu.wpi.first.math.geometry.Pose2d;
 import edu.wpi.first.math.geometry.Translation2d;
 import edu.wpi.first.math.kinematics.ChassisSpeeds;
 import edu.wpi.first.networktables.GenericEntry;
+import edu.wpi.first.wpilibj.DriverStation;
 import edu.wpi.first.wpilibj.GenericHID.RumbleType;
 import edu.wpi.first.wpilibj.Timer;
 import edu.wpi.first.wpilibj.shuffleboard.BuiltInWidgets;
@@ -29,16 +30,16 @@ import java.util.Map;
 import java.util.function.Supplier;
 
 /**
- * Command that controls motor groups based on AprilVision 3.2 AprilTag detection.
+ * Controls motor groups based on AprilTag detection for automated shooting.
+ *
  * Features:
- * - Distance-based shooter RPM from JSON config (with area-based fallback)
- * - Prespin: Shooter spins up first, then feeder starts
- * - Anti-flicker: Keeps running for a short time if tag is briefly lost
- * - Target Lock Feedback: Controller rumbles when aligned
- * - Shot Counter/Limiter: Tracks shots fired
- * - Alignment HUD: Direction indicators on Shuffleboard
- * - Speed Profiles: Toggle between Lob Shot and Line Drive
- * - Best Tag Selection: Uses ambiguity and area for selection
+ * - Distance-based shooter RPM from JSON config (area-based fallback)
+ * - Prespin with velocity verification before feeding
+ * - Tag memory system for brief occlusions
+ * - Controller rumble feedback on target lock
+ * - Shot counting and logging
+ * - Shuffleboard alignment HUD
+ * - Lob Shot and Line Drive speed profiles
  */
 public class VisionControlCommand extends Command {
 
@@ -49,61 +50,52 @@ public class VisionControlCommand extends Command {
   private final CommandPS5Controller m_controller;
   private final TelemetrySubsystem m_telemetry;
 
-  // Optional robot velocity supplier for predictive tracking
   private final Supplier<ChassisSpeeds> m_velocitySupplier;
   private final Supplier<Pose2d> m_poseSupplier;
 
   private boolean m_group1Running = false;
   private boolean m_group2Running = false;
 
-  // ===== ADVANCED TECHNOLOGIES =====
-  // Kalman filter for smoothing distance/yaw readings (accuracy-first design)
+  // Kalman filters for smoothing distance/yaw readings
   private final VisionKalmanFilter m_distanceFilter = VisionKalmanFilter.forDistance();
   private final VisionKalmanFilter m_yawFilter = VisionKalmanFilter.forYaw();
 
-  // Shot logger for match analysis and strategy optimization
   private final ShotLogger m_shotLogger = new ShotLogger();
-
-  // Predictive tracker for shoot-on-the-move (only active when stable)
   private final PredictiveTracker m_predictiveTracker;
 
-  // Enable/disable advanced features (can be toggled for safety)
+  // Feature toggles
   private boolean m_useKalmanFilter = true;
   private boolean m_usePredictiveTracking = true;
   private boolean m_useLeadCompensation = true;
 
-  // Prespin timer
+  // Prespin state
   private final Timer m_prespinTimer = new Timer();
   private boolean m_prespinComplete = false;
 
-  // ===== SMART TAG MEMORY SYSTEM =====
-  // Context-aware tag retention - holds last known target data when tag briefly disappears
-  private static final double TAG_HOLD_TIME_SHOOTING = 0.25;  // 250ms when actively shooting (fast recovery)
-  private static final double TAG_HOLD_TIME_SPINUP = 0.15;    // 150ms during spinup (tighter tolerance)
-  private static final double TAG_HOLD_TIME_IDLE = 0.10;      // 100ms when idle (quick release)
+  // Tag memory state
   private double m_lastTagSeenTime = 0.0;
   private double m_lastKnownRPM = 0.0;
   private double m_lastKnownDistance = 0.0;
   private double m_lastKnownYaw = 0.0;
   private boolean m_hasEverSeenTag = false;
 
-  // Shooting state awareness
+  // Shooting state machine
   private enum ShootingState { IDLE, SPINUP, SHOOTING, COOLDOWN }
   private ShootingState m_shootingState = ShootingState.IDLE;
   private double m_stateChangeTime = 0.0;
 
-  // ===== SPEED PROFILES =====
-  private boolean m_lobShotMode = false;  // false = Line Drive (default), true = Lob Shot
+  // Speed profile
+  private boolean m_lobShotMode = false;
 
-  // ===== SHOT COUNTER =====
+  // Shot counter
   private int m_shotCount = 0;
-  private boolean m_wasShooting = false;  // Track shot transitions
+  private boolean m_wasShooting = false;
 
-  // ===== TARGET LOCK FEEDBACK =====
+  // Rumble feedback
   private final Timer m_rumbleTimer = new Timer();
   private boolean m_isRumbling = false;
 
-  // ===== SHUFFLEBOARD =====
+  // Shuffleboard
   private ShuffleboardTab m_visionTab;
   private GenericEntry m_alignmentArrowEntry;
   private GenericEntry m_alignmentStatusEntry;
@@ -129,7 +121,7 @@ public class VisionControlCommand extends Command {
   }
 
   /**
-   * Full constructor with robot velocity/pose suppliers for advanced features.
+   * Full constructor with robot velocity/pose suppliers for predictive features.
    *
    * @param vision Vision subsystem
    * @param motorGroup1 Feeder motor group
@@ -137,8 +129,8 @@ public class VisionControlCommand extends Command {
    * @param hood Hood subsystem for angle adjustment
    * @param controller PS5 controller for feedback
    * @param telemetry Telemetry subsystem
-   * @param velocitySupplier Supplier for current robot velocity (for lead compensation)
-   * @param poseSupplier Supplier for current robot pose (for predictive tracking)
+   * @param velocitySupplier Supplier for current robot velocity
+   * @param poseSupplier Supplier for current robot pose
    */
   public VisionControlCommand(
       VisionSubsystem vision,
@@ -158,18 +150,15 @@ public class VisionControlCommand extends Command {
     m_velocitySupplier = velocitySupplier;
     m_poseSupplier = poseSupplier;
 
-    // Initialize predictive tracker with HUB position (center of field for 2026 REBUILT)
-    // HUB is at field center: ~8.2m x ~4.1m on a 16.5m x 8.2m field
+    // HUB position at field center for 2026 REBUILT
     Translation2d hubPosition = new Translation2d(8.23, 4.11);
     m_predictiveTracker = new PredictiveTracker(hubPosition);
 
-    // Disable predictive features if no velocity supplier
     if (velocitySupplier == null) {
       m_usePredictiveTracking = false;
       m_useLeadCompensation = false;
     }
 
-    // Add requirements (hood is optional)
     if (hood != null) {
       addRequirements(vision, motorGroup1, motorGroup2, hood);
     } else {
@@ -182,7 +171,6 @@ public class VisionControlCommand extends Command {
 
     m_visionTab = Shuffleboard.getTab("AutoShoot");
 
-    // Alignment HUD - large text showing direction
     m_alignmentArrowEntry = m_visionTab.add("Alignment", "---")
         .withWidget(BuiltInWidgets.kTextView)
         .withPosition(0, 0)
@@ -195,7 +183,6 @@ public class VisionControlCommand extends Command {
         .withSize(2, 1)
         .getEntry();
 
-    // Target lock indicator
     m_targetLockEntry = m_visionTab.add("TARGET LOCK", false)
         .withWidget(BuiltInWidgets.kBooleanBox)
         .withProperties(Map.of("colorWhenTrue", "#00FF00", "colorWhenFalse", "#FF0000"))
@@ -203,7 +190,6 @@ public class VisionControlCommand extends Command {
         .withSize(2, 1)
         .getEntry();
 
-    // Shot counter
     m_shotCountEntry = m_visionTab.add("Shots Fired", 0)
         .withWidget(BuiltInWidgets.kNumberBar)
         .withProperties(Map.of("min", 0, "max", VisionConstants.kMaxShotsPerSession))
@@ -211,14 +197,12 @@ public class VisionControlCommand extends Command {
         .withSize(2, 1)
         .getEntry();
 
-    // Speed profile display
     m_speedProfileEntry = m_visionTab.add("Speed Profile", "LINE DRIVE")
         .withWidget(BuiltInWidgets.kTextView)
         .withPosition(0, 2)
         .withSize(2, 1)
         .getEntry();
 
-    // Shooter RPM gauge
     m_shooterRPMEntry = m_visionTab.add("Shooter RPM", 0.0)
         .withWidget(BuiltInWidgets.kDial)
         .withProperties(Map.of("min", 0, "max", 5000))
@@ -226,7 +210,6 @@ public class VisionControlCommand extends Command {
         .withSize(2, 2)
         .getEntry();
 
-    // Distance (from 3D transform) or Tag Area % (fallback)
     m_distanceEntry = m_visionTab.add("Distance (m)", 0.0)
         .withWidget(BuiltInWidgets.kNumberBar)
         .withProperties(Map.of("min", 0, "max", 6))
@@ -235,7 +218,7 @@ public class VisionControlCommand extends Command {
         .getEntry();
 
     m_shuffleboardInitialized = true;
-    System.out.println("[AUTOSHOOT] Shuffleboard 'AutoShoot' tab initialized");
+    DriverStation.reportWarning("[AUTOSHOOT] Shuffleboard initialized", false);
   }
 
   @Override
@@ -252,19 +235,14 @@ public class VisionControlCommand extends Command {
     m_rumbleTimer.stop();
     m_isRumbling = false;
 
-    // Reset advanced technology state
     m_distanceFilter.reset();
     m_yawFilter.reset();
     m_predictiveTracker.reset();
 
-    // Initialize Shuffleboard on first run
     initializeShuffleboard();
 
-    System.out.println("[AUTOSHOOT] Command started - waiting for HUB tags");
-    System.out.println("[AUTOSHOOT] Speed Profile: " + (m_lobShotMode ? "LOB SHOT" : "LINE DRIVE"));
-    System.out.println("[AUTOSHOOT] Session shots: " + m_shotCount);
-    System.out.println("[AUTOSHOOT] Advanced features: Kalman=" + m_useKalmanFilter +
-        " Predict=" + m_usePredictiveTracking + " Lead=" + m_useLeadCompensation);
+    DriverStation.reportWarning("[AUTOSHOOT] Started - Profile: " +
+        (m_lobShotMode ? "LOB" : "LINE") + " | Shots: " + m_shotCount, false);
 
     updateShuffleboardStatus("ACTIVE - Waiting");
   }
@@ -272,48 +250,68 @@ public class VisionControlCommand extends Command {
   @Override
   public void execute() {
     double currentTime = Timer.getFPGATimestamp();
-    boolean tagCurrentlyVisible = m_vision.hasHubTags() || m_vision.hasMotorGroup2Tags();
-    double shooterRPM = m_lastKnownRPM;
 
-    // ===== BEST TAG SELECTION (using distance or fallback to area) =====
+    // Process vision data
+    VisionData visionData = processVisionData(currentTime);
+
+    // Update alignment HUD and feedback
+    updateAlignmentHUD(visionData.tagVisible, visionData.yaw);
+    updateTargetLockFeedback(visionData.tagVisible, visionData.yaw);
+
+    // Determine if we should run motors
+    boolean shouldRun = shouldRunMotors(currentTime, visionData.tagVisible);
+
+    // Update shooting state machine
+    updateShootingState(visionData.tagVisible, currentTime);
+
+    // Control shooter and feeder
+    controlShooter(shouldRun);
+    boolean currentlyShooting = controlFeeder(shouldRun);
+
+    // Track shots
+    trackShots(currentlyShooting, visionData.yaw);
+
+    // Update dashboard
+    updateDashboard(shouldRun, currentlyShooting);
+  }
+
+  /**
+   * Processes vision data including filtering and predictive tracking.
+   */
+  private VisionData processVisionData(double currentTime) {
+    boolean tagVisible = m_vision.hasHubTags() || m_vision.hasMotorGroup2Tags();
     double area = m_vision.getBestArea();
     double ambiguity = m_vision.getBestAmbiguity();
     double rawYaw = m_vision.getBestYaw();
     double rawDistance = m_vision.getClosestTagDistance();
 
-    // ===== KALMAN FILTER SMOOTHING (Accuracy-first) =====
-    // Only smooths when data is consistent, resets on jumps
     double distance = rawDistance;
     double yaw = rawYaw;
 
-    if (tagCurrentlyVisible && m_useKalmanFilter) {
+    // Apply Kalman filtering
+    if (tagVisible && m_useKalmanFilter) {
       distance = m_distanceFilter.update(rawDistance);
       yaw = m_yawFilter.update(rawYaw);
-    } else if (!tagCurrentlyVisible) {
-      // Reset filters when target lost to avoid stale data
+    } else if (!tagVisible) {
       m_distanceFilter.reset();
       m_yawFilter.reset();
     }
 
-    // ===== PREDICTIVE TRACKING (when robot velocity available) =====
+    // Apply predictive tracking
     double leadAngleOffset = 0.0;
     double rpmAdjustment = 1.0;
 
-    if (tagCurrentlyVisible && m_usePredictiveTracking && m_velocitySupplier != null && m_poseSupplier != null) {
+    if (tagVisible && m_usePredictiveTracking && m_velocitySupplier != null && m_poseSupplier != null) {
       ChassisSpeeds velocity = m_velocitySupplier.get();
       Pose2d pose = m_poseSupplier.get();
 
-      // Update predictive tracker
       PredictiveTracker.AimResult aimResult = m_predictiveTracker.update(pose, velocity);
 
-      // Only apply prediction if confidence is high enough
-      if (aimResult.usingPrediction && aimResult.confidence > 0.7) {
+      if (aimResult.usingPrediction && aimResult.confidence > VisionConstants.kPredictiveConfidenceThreshold) {
         leadAngleOffset = aimResult.leadAngleDegrees;
-        // Use predicted distance for RPM calculation
         distance = aimResult.distance;
       }
 
-      // ===== AUTO-LEAD COMPENSATION =====
       if (m_useLeadCompensation) {
         AutoLeadCompensation.CompensationResult leadComp =
             AutoLeadCompensation.calculate(velocity, yaw, distance);
@@ -325,82 +323,63 @@ public class VisionControlCommand extends Command {
       }
     }
 
-    // Check if tag is currently visible and has good quality
-    if (tagCurrentlyVisible) {
-      // Only use tags with acceptable ambiguity
-      if (ambiguity <= VisionConstants.kMaxAmbiguityThreshold || ambiguity == 0.0) {
-        m_lastTagSeenTime = currentTime;
-        m_hasEverSeenTag = true;
+    // Calculate RPM if tag visible with good quality
+    if (tagVisible && (ambiguity <= VisionConstants.kMaxAmbiguityThreshold || ambiguity == 0.0)) {
+      m_lastTagSeenTime = currentTime;
+      m_hasEverSeenTag = true;
 
-        // Prefer distance-based RPM (from JSON config) if distance is available
-        // Otherwise fallback to area-based calculation
-        if (distance > 0.01) {
-          // Use distance-based shooting from JSON config
-          shooterRPM = m_motorGroup2.getRPMForDistance(distance);
-          // Apply RPM adjustment from lead compensation
-          shooterRPM *= rpmAdjustment;
-          m_lastKnownDistance = distance;  // Store for memory system
+      double shooterRPM;
+      if (distance > VisionConstants.kMinDistanceThreshold) {
+        shooterRPM = m_motorGroup2.getRPMForDistance(distance) * rpmAdjustment;
+        m_lastKnownDistance = distance;
 
-          // Auto-adjust hood angle based on distance (if hood is calibrated)
-          if (m_hood != null && m_hood.isCalibrated()) {
-            double hoodAngle = m_motorGroup2.getHoodAngleForDistance(distance);
-            m_hood.setTargetAngle(hoodAngle);
-            m_hood.setVisionControlEnabled(true);
-          }
-
-          if (m_shuffleboardInitialized) {
-            m_distanceEntry.setDouble(distance);  // Show actual distance
-          }
-        } else {
-          // Fallback to area-based calculation (legacy method)
-          shooterRPM = calculateShooterRPMFromArea(area);
-          if (m_shuffleboardInitialized) {
-            m_distanceEntry.setDouble(area);  // Show area as fallback
-          }
+        if (m_hood != null && m_hood.isCalibrated()) {
+          double hoodAngle = m_motorGroup2.getHoodAngleForDistance(distance);
+          m_hood.setTargetAngle(hoodAngle);
+          m_hood.setVisionControlEnabled(true);
         }
 
-        // Store last known values for smart tag memory system
-        m_lastKnownRPM = shooterRPM;
-        m_lastKnownYaw = yaw + leadAngleOffset;  // Include lead angle in stored yaw
+        if (m_shuffleboardInitialized) {
+          m_distanceEntry.setDouble(distance);
+        }
       } else {
-        // High ambiguity - log but don't use
-        System.out.println("[AUTOSHOOT] Tag ignored - ambiguity too high: " +
-            String.format("%.3f", ambiguity));
+        shooterRPM = calculateShooterRPMFromArea(area);
+        if (m_shuffleboardInitialized) {
+          m_distanceEntry.setDouble(area);
+        }
       }
+
+      m_lastKnownRPM = shooterRPM;
+      m_lastKnownYaw = yaw + leadAngleOffset;
+    } else if (tagVisible) {
+      DriverStation.reportWarning("[AUTOSHOOT] Tag ignored - ambiguity: " +
+          String.format("%.3f", ambiguity), false);
     }
 
-    // ===== ALIGNMENT HUD =====
-    updateAlignmentHUD(tagCurrentlyVisible, yaw);
+    return new VisionData(tagVisible, yaw);
+  }
 
-    // ===== TARGET LOCK FEEDBACK (Rumble) =====
-    boolean isAligned = tagCurrentlyVisible &&
-        Math.abs(yaw) <= VisionConstants.kAlignedYawThreshold;
-    updateRumbleFeedback(isAligned);
-
-    // Update target lock indicator
-    if (m_shuffleboardInitialized) {
-      m_targetLockEntry.setBoolean(isAligned);
-    }
-
-    // ===== SMART TAG MEMORY - Context-aware hold time =====
-    // Use different hold times based on current shooting state
+  /**
+   * Determines if motors should run based on tag visibility and memory.
+   */
+  private boolean shouldRunMotors(double currentTime, boolean tagVisible) {
     double timeSinceLastSeen = currentTime - m_lastTagSeenTime;
-    double contextHoldTime = getContextAwareHoldTime();
-    boolean withinHoldTime = m_hasEverSeenTag && (timeSinceLastSeen < contextHoldTime);
-    boolean shouldRun = tagCurrentlyVisible || withinHoldTime;
+    double holdTime = getContextAwareHoldTime();
+    boolean withinHoldTime = m_hasEverSeenTag && (timeSinceLastSeen < holdTime);
+    return tagVisible || withinHoldTime;
+  }
 
-    // Update shooting state for context awareness
-    updateShootingState(tagCurrentlyVisible, currentTime);
-
-    // Control Motor Group 2 (Shooter)
+  /**
+   * Controls the shooter motors.
+   */
+  private void controlShooter(boolean shouldRun) {
     if (shouldRun && m_lastKnownRPM > 0) {
       if (!m_group2Running) {
         m_prespinTimer.reset();
         m_prespinTimer.start();
         m_prespinComplete = false;
-        System.out.println("[AUTOSHOOT] Shooter spinning up @ " +
-            String.format("%.0f", m_lastKnownRPM) + " RPM (" +
-            (m_lobShotMode ? "LOB" : "LINE") + ")");
+        DriverStation.reportWarning("[AUTOSHOOT] Spinup @ " +
+            String.format("%.0f", m_lastKnownRPM) + " RPM", false);
       }
       m_motorGroup2.runAtRPM(m_lastKnownRPM);
       m_group2Running = true;
@@ -409,12 +388,12 @@ public class VisionControlCommand extends Command {
         m_shooterRPMEntry.setDouble(m_lastKnownRPM);
       }
 
-      // Check if prespin delay has elapsed
-      if (m_prespinTimer.hasElapsed(VisionConstants.kPrespinDelaySeconds)) {
-        if (!m_prespinComplete) {
-          System.out.println("[AUTOSHOOT] Prespin complete - starting feeder!");
+      // Check prespin complete with velocity verification
+      if (!m_prespinComplete && m_prespinTimer.hasElapsed(VisionConstants.kPrespinDelaySeconds)) {
+        if (isShooterAtSpeed()) {
+          m_prespinComplete = true;
+          DriverStation.reportWarning("[AUTOSHOOT] Prespin complete - shooter at speed", false);
         }
-        m_prespinComplete = true;
       }
     } else {
       if (m_group2Running) {
@@ -423,18 +402,23 @@ public class VisionControlCommand extends Command {
         m_prespinComplete = false;
         m_prespinTimer.reset();
         m_prespinTimer.stop();
-        System.out.println("[AUTOSHOOT] Target lost - stopping");
+        DriverStation.reportWarning("[AUTOSHOOT] Target lost - stopping", false);
       }
       if (m_shuffleboardInitialized) {
         m_shooterRPMEntry.setDouble(0.0);
       }
     }
+  }
 
-    // Control Motor Group 1 (Feeder) - only after prespin complete
+  /**
+   * Controls the feeder motors. Returns true if currently shooting.
+   */
+  private boolean controlFeeder(boolean shouldRun) {
     boolean currentlyShooting = shouldRun && m_prespinComplete;
+
     if (currentlyShooting) {
       if (!m_group1Running) {
-        System.out.println("[AUTOSHOOT] Feeder running - SHOOTING!");
+        DriverStation.reportWarning("[AUTOSHOOT] Feeder running - SHOOTING", false);
       }
       m_motorGroup1.runMotors();
       m_group1Running = true;
@@ -445,18 +429,36 @@ public class VisionControlCommand extends Command {
       }
     }
 
-    // ===== SHOT COUNTER & LOGGING =====
-    // Count a "shot" when feeder transitions from not running to running
+    return currentlyShooting;
+  }
+
+  /**
+   * Checks if shooter has reached target RPM within tolerance.
+   */
+  private boolean isShooterAtSpeed() {
+    if (!VisionConstants.kRequireShooterAtSpeed) {
+      return true;
+    }
+
+    double currentRPM = m_motorGroup2.getAverageRPM();
+    double targetRPM = m_lastKnownRPM;
+    double requiredRPM = targetRPM * VisionConstants.kShooterRPMTolerance;
+
+    return currentRPM >= requiredRPM;
+  }
+
+  /**
+   * Tracks shot events for telemetry and logging.
+   */
+  private void trackShots(boolean currentlyShooting, double yaw) {
     if (currentlyShooting && !m_wasShooting) {
       m_shotCount++;
-      System.out.println("[AUTOSHOOT] Shot #" + m_shotCount + " fired!");
+      DriverStation.reportWarning("[AUTOSHOOT] Shot #" + m_shotCount + " fired", false);
 
-      // Record shot to telemetry for match analysis
       if (m_telemetry != null) {
-        m_telemetry.recordShot(m_lastKnownRPM, area, yaw);
+        m_telemetry.recordShot(m_lastKnownRPM, m_vision.getBestArea(), yaw);
       }
 
-      // Record to ShotLogger for detailed analysis (heat maps, strategy)
       double robotVelocity = 0.0;
       if (m_velocitySupplier != null) {
         ChassisSpeeds speeds = m_velocitySupplier.get();
@@ -465,15 +467,25 @@ public class VisionControlCommand extends Command {
       m_shotLogger.recordShot(m_lastKnownDistance, m_lastKnownRPM, m_lastKnownYaw, robotVelocity);
     }
     m_wasShooting = currentlyShooting;
+  }
 
-    // Update shot count on Shuffleboard
+  /**
+   * Updates dashboard displays.
+   */
+  private void updateDashboard(boolean shouldRun, boolean currentlyShooting) {
     if (m_shuffleboardInitialized) {
       m_shotCountEntry.setInteger(m_shotCount);
     }
 
-    // Update status
-    updateShuffleboardStatus(
-        m_group2Running ? (m_prespinComplete ? "SHOOTING" : "PRESPIN") : "WAITING");
+    String status;
+    if (currentlyShooting) {
+      status = "SHOOTING";
+    } else if (m_group2Running) {
+      status = isShooterAtSpeed() ? "READY" : "PRESPIN";
+    } else {
+      status = "WAITING";
+    }
+    updateShuffleboardStatus(status);
   }
 
   private void updateAlignmentHUD(boolean tagVisible, double yaw) {
@@ -489,7 +501,6 @@ public class VisionControlCommand extends Command {
       arrow = ">>> LOCKED <<<";
       status = "ALIGNED";
     } else if (Math.abs(yaw) <= VisionConstants.kCloseYawThreshold) {
-      // Close to aligned
       if (yaw > 0) {
         arrow = "-> CLOSE";
         status = "TURN RIGHT";
@@ -498,13 +509,12 @@ public class VisionControlCommand extends Command {
         status = "TURN LEFT";
       }
     } else {
-      // Far from aligned
       if (yaw > 0) {
         arrow = "-->>";
-        status = "TURN RIGHT (" + String.format("%.1f", yaw) + "°)";
+        status = "TURN RIGHT (" + String.format("%.1f", yaw) + ")";
       } else {
         arrow = "<<--";
-        status = "TURN LEFT (" + String.format("%.1f", Math.abs(yaw)) + "°)";
+        status = "TURN LEFT (" + String.format("%.1f", Math.abs(yaw)) + ")";
       }
     }
 
@@ -512,25 +522,31 @@ public class VisionControlCommand extends Command {
     m_alignmentStatusEntry.setString(status);
   }
 
+  private void updateTargetLockFeedback(boolean tagVisible, double yaw) {
+    boolean isAligned = tagVisible && Math.abs(yaw) <= VisionConstants.kAlignedYawThreshold;
+
+    if (m_shuffleboardInitialized) {
+      m_targetLockEntry.setBoolean(isAligned);
+    }
+
+    updateRumbleFeedback(isAligned);
+  }
+
   private void updateRumbleFeedback(boolean isAligned) {
     if (m_controller == null) return;
 
     if (isAligned) {
-      // Pulse rumble when aligned
       if (!m_isRumbling) {
-        m_controller.getHID().setRumble(RumbleType.kBothRumble,
-            VisionConstants.kRumbleIntensity);
+        m_controller.getHID().setRumble(RumbleType.kBothRumble, VisionConstants.kRumbleIntensity);
         m_rumbleTimer.reset();
         m_rumbleTimer.start();
         m_isRumbling = true;
       } else if (m_rumbleTimer.hasElapsed(VisionConstants.kRumbleDuration)) {
-        // Pulse off briefly then back on
         m_controller.getHID().setRumble(RumbleType.kBothRumble, 0.0);
         m_rumbleTimer.reset();
         m_isRumbling = false;
       }
     } else {
-      // Stop rumble when not aligned
       if (m_isRumbling) {
         m_controller.getHID().setRumble(RumbleType.kBothRumble, 0.0);
         m_rumbleTimer.stop();
@@ -541,12 +557,11 @@ public class VisionControlCommand extends Command {
 
   /**
    * Toggle between Lob Shot and Line Drive speed profiles.
-   * Call this from a button binding.
    */
   public void toggleSpeedProfile() {
     m_lobShotMode = !m_lobShotMode;
     String profile = m_lobShotMode ? "LOB SHOT" : "LINE DRIVE";
-    System.out.println("[AUTOSHOOT] Speed profile changed to: " + profile);
+    DriverStation.reportWarning("[AUTOSHOOT] Profile: " + profile, false);
 
     if (m_shuffleboardInitialized) {
       m_speedProfileEntry.setString(profile);
@@ -555,97 +570,67 @@ public class VisionControlCommand extends Command {
 
   /**
    * Set speed profile directly.
-   * @param lobShot true for Lob Shot, false for Line Drive
    */
   public void setSpeedProfile(boolean lobShot) {
     m_lobShotMode = lobShot;
     String profile = m_lobShotMode ? "LOB SHOT" : "LINE DRIVE";
-    System.out.println("[AUTOSHOOT] Speed profile set to: " + profile);
+    DriverStation.reportWarning("[AUTOSHOOT] Profile set: " + profile, false);
 
     if (m_shuffleboardInitialized) {
       m_speedProfileEntry.setString(profile);
     }
   }
 
-  /**
-   * Get current shot count.
-   */
   public int getShotCount() {
     return m_shotCount;
   }
 
-  /**
-   * Reset shot counter.
-   */
   public void resetShotCount() {
     m_shotCount = 0;
-    System.out.println("[AUTOSHOOT] Shot counter reset");
+    DriverStation.reportWarning("[AUTOSHOOT] Shot counter reset", false);
 
     if (m_shuffleboardInitialized) {
       m_shotCountEntry.setInteger(0);
     }
   }
 
-  /**
-   * Get context-aware hold time based on current shooting state.
-   * When actively shooting, we hold longer to avoid interruption.
-   * When idle, we release quickly to be responsive.
-   */
   private double getContextAwareHoldTime() {
     switch (m_shootingState) {
       case SHOOTING:
-        return TAG_HOLD_TIME_SHOOTING;  // 0.25s - maintain shot even if tag flickers
-      case SPINUP:
-        return TAG_HOLD_TIME_SPINUP;    // 0.15s - tighter tolerance during spinup
       case COOLDOWN:
-        return TAG_HOLD_TIME_SHOOTING;  // 0.25s - still maintain during cooldown
+        return VisionConstants.kTagHoldTimeShooting;
+      case SPINUP:
+        return VisionConstants.kTagHoldTimeSpinup;
       case IDLE:
       default:
-        return TAG_HOLD_TIME_IDLE;      // 0.10s - quick release when not engaged
+        return VisionConstants.kTagHoldTimeIdle;
     }
   }
 
-  /**
-   * Update shooting state for context awareness.
-   * Tracks IDLE -> SPINUP -> SHOOTING -> COOLDOWN -> IDLE transitions.
-   */
   private void updateShootingState(boolean tagVisible, double currentTime) {
     ShootingState previousState = m_shootingState;
 
-    // State machine for shooting context
     if (m_group1Running && m_prespinComplete) {
-      // Feeder running + prespin done = actively shooting
       m_shootingState = ShootingState.SHOOTING;
     } else if (m_group2Running && !m_prespinComplete) {
-      // Shooter spinning but not feeding = spinup
       m_shootingState = ShootingState.SPINUP;
     } else if (previousState == ShootingState.SHOOTING && !m_group1Running) {
-      // Just stopped shooting = cooldown
       m_shootingState = ShootingState.COOLDOWN;
       m_stateChangeTime = currentTime;
     } else if (m_shootingState == ShootingState.COOLDOWN) {
-      // Exit cooldown after a brief period
-      if (currentTime - m_stateChangeTime > 0.3) {
+      if (currentTime - m_stateChangeTime > VisionConstants.kCooldownDuration) {
         m_shootingState = ShootingState.IDLE;
       }
     } else if (!m_group2Running && !m_group1Running) {
-      // Nothing running = idle
       m_shootingState = ShootingState.IDLE;
     }
 
-    // Log state changes for debugging
     if (previousState != m_shootingState) {
-      System.out.println("[AUTOSHOOT] State: " + previousState + " -> " + m_shootingState +
-          " (hold time: " + String.format("%.0f", getContextAwareHoldTime() * 1000) + "ms)");
+      DriverStation.reportWarning("[AUTOSHOOT] State: " + previousState + " -> " + m_shootingState, false);
     }
   }
 
-  /**
-   * Calculate shooter RPM based on target area in frame.
-   * Uses current speed profile (Lob Shot or Line Drive).
-   */
   private double calculateShooterRPMFromArea(double area) {
-    // Get RPM range based on current speed profile
     double minRPM, maxRPM;
     if (m_lobShotMode) {
       minRPM = VisionConstants.kLobShotMinRPM;
@@ -655,16 +640,12 @@ public class VisionControlCommand extends Command {
       maxRPM = VisionConstants.kLineDriveMaxRPM;
     }
 
-    double clampedArea = Math.max(VisionConstants.kMinArea,
-        Math.min(VisionConstants.kMaxArea, area));
-
+    double clampedArea = Math.max(VisionConstants.kMinArea, Math.min(VisionConstants.kMaxArea, area));
     double areaRange = VisionConstants.kMaxArea - VisionConstants.kMinArea;
     double normalizedArea = (clampedArea - VisionConstants.kMinArea) / areaRange;
-
     double rpmRange = maxRPM - minRPM;
-    double rpm = maxRPM - (normalizedArea * rpmRange);
 
-    return rpm;
+    return maxRPM - (normalizedArea * rpmRange);
   }
 
   private void updateShuffleboardStatus(String status) {
@@ -683,27 +664,23 @@ public class VisionControlCommand extends Command {
     m_prespinTimer.stop();
     m_hasEverSeenTag = false;
 
-    // Disable vision control on hood
     if (m_hood != null) {
       m_hood.setVisionControlEnabled(false);
     }
 
-    // Stop any rumble
     if (m_controller != null) {
       m_controller.getHID().setRumble(RumbleType.kBothRumble, 0.0);
     }
     m_isRumbling = false;
     m_rumbleTimer.stop();
 
-    System.out.println("[AUTOSHOOT] Command ended" + (interrupted ? " (interrupted)" : ""));
-    System.out.println("[AUTOSHOOT] Total shots this session: " + m_shotCount);
+    DriverStation.reportWarning("[AUTOSHOOT] Ended" + (interrupted ? " (interrupted)" : "") +
+        " | Shots: " + m_shotCount, false);
 
-    // Print shot logger summary for match analysis
     if (m_shotLogger.getTotalShots() > 0) {
-      System.out.println(m_shotLogger.getSessionSummary());
+      DriverStation.reportWarning(m_shotLogger.getSessionSummary(), false);
     }
 
-    // Reset filters for next run
     m_distanceFilter.reset();
     m_yawFilter.reset();
     m_predictiveTracker.reset();
@@ -711,47 +688,27 @@ public class VisionControlCommand extends Command {
     updateShuffleboardStatus("STOPPED");
   }
 
-  // ===== ADVANCED FEATURE TOGGLES =====
-
-  /**
-   * Enable or disable Kalman filter smoothing.
-   * Disable if you notice any tracking lag.
-   */
   public void setKalmanFilterEnabled(boolean enabled) {
     m_useKalmanFilter = enabled;
-    System.out.println("[AUTOSHOOT] Kalman filter: " + (enabled ? "ENABLED" : "DISABLED"));
+    DriverStation.reportWarning("[AUTOSHOOT] Kalman: " + (enabled ? "ON" : "OFF"), false);
   }
 
-  /**
-   * Enable or disable predictive tracking.
-   * Only works if velocity supplier was provided.
-   */
   public void setPredictiveTrackingEnabled(boolean enabled) {
     m_usePredictiveTracking = enabled && m_velocitySupplier != null;
-    System.out.println("[AUTOSHOOT] Predictive tracking: " +
-        (m_usePredictiveTracking ? "ENABLED" : "DISABLED"));
+    DriverStation.reportWarning("[AUTOSHOOT] Predictive: " +
+        (m_usePredictiveTracking ? "ON" : "OFF"), false);
   }
 
-  /**
-   * Enable or disable auto-lead compensation.
-   * Only works if velocity supplier was provided.
-   */
   public void setLeadCompensationEnabled(boolean enabled) {
     m_useLeadCompensation = enabled && m_velocitySupplier != null;
-    System.out.println("[AUTOSHOOT] Lead compensation: " +
-        (m_useLeadCompensation ? "ENABLED" : "DISABLED"));
+    DriverStation.reportWarning("[AUTOSHOOT] Lead comp: " +
+        (m_useLeadCompensation ? "ON" : "OFF"), false);
   }
 
-  /**
-   * Get shot logger for analysis access.
-   */
   public ShotLogger getShotLogger() {
     return m_shotLogger;
   }
 
-  /**
-   * Get the most used shooting zone (for strategy).
-   */
   public int getMostUsedShootingZone() {
     return m_shotLogger.getMostUsedZone();
   }
@@ -759,5 +716,18 @@ public class VisionControlCommand extends Command {
   @Override
   public boolean isFinished() {
     return false;
+  }
+
+  /**
+   * Container for processed vision data.
+   */
+  private static class VisionData {
+    final boolean tagVisible;
+    final double yaw;
+
+    VisionData(boolean tagVisible, double yaw) {
+      this.tagVisible = tagVisible;
+      this.yaw = yaw;
+    }
   }
 }
